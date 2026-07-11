@@ -39,7 +39,7 @@ class MqttService {
       _client!.onConnected = () => print('✅ MQTT Connected!');
       _client!.onDisconnected = () => print('❌ MQTT Disconnected');
       _client!.onAutoReconnected = () => print('🔄 MQTT Reconnected');
-      _client!.onAutoReconnectMessageSent = () => print('📤 Reconnect sent');
+
 
       final connMsg = MqttConnectMessage()
           .withClientIdentifier(clientId)
