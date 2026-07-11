@@ -25,11 +25,11 @@ class MqttService {
         _client = null;
       }
 
-      final clientId = 'smartnest_${DateTime.now().millisecondsSinceEpoch % 99999}';
+      final clientId = 'sn${DateTime.now().millisecondsSinceEpoch % 99999}';
       _client = MqttServerClient.withPort(_broker, clientId, _port);
 
-      // MQTT v5 — HiveMQ cloud requires this
-      _client!.setProtocolV5();
+      // Use MQTT v5 protocol — HiveMQ cloud needs this
+      _client!.protocol = MqttClientProtocol.v5;
 
       _client!.secure = true;
       _client!.keepAlivePeriod = 20;
@@ -37,8 +37,8 @@ class MqttService {
       _client!.autoReconnect = false;
       _client!.logging(on: false);
 
-      _client!.onConnected    = () => print('✅ MQTT Connected!');
-      _client!.onDisconnected = () => print('❌ MQTT Disconnected');
+      _client!.onConnected    = () => print('MQTT Connected!');
+      _client!.onDisconnected = () => print('MQTT Disconnected');
 
       final connMsg = MqttConnectMessage()
           .withClientIdentifier(clientId)
@@ -46,14 +46,11 @@ class MqttService {
           .startClean();
       _client!.connectionMessage = connMsg;
 
-      print('Connecting to HiveMQ (MQTT v5)...');
+      print('Connecting to HiveMQ...');
       final status = await _client!.connect();
-      print('Status: ${status?.state} / ${status?.returnCode}');
+      print('Status: ${status?.state}');
 
-      if (!isConnected) {
-        print('Failed: ${status?.state}');
-        return false;
-      }
+      if (!isConnected) return false;
 
       _client!.updates?.listen((List<MqttReceivedMessage<MqttMessage>> msgs) {
         for (final m in msgs) {
@@ -76,7 +73,6 @@ class MqttService {
     final builder = MqttClientPayloadBuilder();
     builder.addString(jsonEncode(data));
     _client!.publishMessage(topic, MqttQos.atLeastOnce, builder.payload!);
-    print('📤 $topic: ${jsonEncode(data)}');
   }
 
   void subscribe(String topic) {
