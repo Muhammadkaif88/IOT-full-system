@@ -1,5 +1,4 @@
 import 'package:mqtt_client/mqtt_client.dart';
-import 'package:mqtt_client/mqtt_browser_client.dart';
 import 'package:mqtt_client/mqtt_server_client.dart';
 import 'dart:convert';
 
@@ -8,12 +7,12 @@ class MqttService {
   factory MqttService() => _instance;
   MqttService._internal();
 
-  // HiveMQ WebSocket URL (port 8884 = WSS, works on Android without TLS issues)
-  static const String _wsUrl    = 'wss://953f09ca32294f208d3850080482d3c2.s1.eu.hivemq.cloud:8884/mqtt';
-  static const String _username = 'prozmic';
-  static const String _password = '2004@2004';
+  // LOCAL Mosquitto broker running on PC
+  // PC ip address — same WiFi network
+  static const String _broker   = '192.168.1.12'; // <-- PC IP address
+  static const int    _port     = 1883;            // no TLS — simple local
 
-  MqttBrowserClient? _client;
+  MqttServerClient? _client;
   bool get isConnected =>
       _client?.connectionStatus?.state == MqttConnectionState.connected;
 
@@ -26,39 +25,35 @@ class MqttService {
         _client = null;
       }
 
-      final clientId = 'sn${DateTime.now().millisecondsSinceEpoch % 99999}';
+      final clientId = 'sn_${DateTime.now().millisecondsSinceEpoch % 9999}';
+      _client = MqttServerClient.withPort(_broker, clientId, _port);
 
-      // WebSocket connection to HiveMQ — works on Android perfectly
-      _client = MqttBrowserClient(_wsUrl, clientId);
-      _client!.keepAlivePeriod = 20;
-      _client!.connectTimeoutPeriod = 15000;
+      // Simple TCP — no TLS, no password — local network
+      _client!.secure = false;
+      _client!.keepAlivePeriod = 30;
+      _client!.connectTimeoutPeriod = 8000;
       _client!.autoReconnect = true;
       _client!.logging(on: false);
 
-      _client!.onConnected    = () => print('✅ MQTT Connected via WebSocket!');
-      _client!.onDisconnected = () => print('❌ MQTT Disconnected');
+      _client!.onConnected    = () => print('MQTT Local Connected!');
+      _client!.onDisconnected = () => print('MQTT Disconnected');
 
       final connMsg = MqttConnectMessage()
           .withClientIdentifier(clientId)
-          .authenticateAs(_username, _password)
           .startClean();
       _client!.connectionMessage = connMsg;
 
-      print('Connecting to HiveMQ via WSS...');
+      print('Connecting to local broker $_broker:$_port ...');
       final status = await _client!.connect();
-      print('Status: ${status?.state} / ${status?.returnCode}');
+      print('Status: ${status?.state}');
 
-      if (!isConnected) {
-        print('Connection failed: ${status?.state}');
-        return false;
-      }
+      if (!isConnected) return false;
 
       _client!.updates?.listen((List<MqttReceivedMessage<MqttMessage>> msgs) {
         for (final m in msgs) {
           final pub = m.payload as MqttPublishMessage;
           final payload = MqttPublishPayload.bytesToStringAsString(
               pub.payload.message);
-          print('📩 ${m.topic}: $payload');
           onMessageReceived?.call(m.topic, payload);
         }
       });
@@ -71,20 +66,16 @@ class MqttService {
   }
 
   void publish(String topic, Map<String, dynamic> data) {
-    if (!isConnected) {
-      print('Not connected — cannot publish');
-      return;
-    }
+    if (!isConnected) return;
     final builder = MqttClientPayloadBuilder();
     builder.addString(jsonEncode(data));
     _client!.publishMessage(topic, MqttQos.atLeastOnce, builder.payload!);
-    print('📤 $topic: ${jsonEncode(data)}');
+    print('Published: $topic => ${jsonEncode(data)}');
   }
 
   void subscribe(String topic) {
     if (!isConnected) return;
     _client!.subscribe(topic, MqttQos.atLeastOnce);
-    print('📥 Subscribed: $topic');
   }
 
   void disconnect() {
