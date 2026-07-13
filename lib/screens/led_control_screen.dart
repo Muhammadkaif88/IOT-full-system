@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_colorpicker/flutter_colorpicker.dart';
 import '../models/device.dart';
-import '../services/mqtt_service.dart';
+import '../services/led_service.dart';
 
 class LedControlScreen extends StatefulWidget {
   final Device device;
@@ -11,10 +11,10 @@ class LedControlScreen extends StatefulWidget {
 }
 
 class _LedControlScreenState extends State<LedControlScreen> {
-  final mqtt = MqttService();
-  bool _mqttConnected = false;
+  final led = LedService();
+  bool _connected = false;
   bool _connecting = true;
-  String _statusMsg = 'Connecting to broker...';
+  final _ipController = TextEditingController();
 
   Color selectedColor = const Color(0xFFFF4500);
   int selectedEffect = 0;
@@ -44,50 +44,79 @@ class _LedControlScreenState extends State<LedControlScreen> {
   @override
   void initState() {
     super.initState();
-    _connectMqtt();
+    _init();
   }
 
-  Future<void> _connectMqtt() async {
-    setState(() { _connecting = true; _statusMsg = 'Connecting...'; });
-    try {
-      final ok = await mqtt.connect();
-      if (mounted) {
-        setState(() {
-          _mqttConnected = ok;
-          _connecting = false;
-          _statusMsg = ok ? 'Live' : 'Connection failed — retry cheyyu';
-        });
-        if (ok) mqtt.subscribe('home/living/led1/state');
-      }
-    } catch (e) {
-      if (mounted) {
-        setState(() {
-          _mqttConnected = false;
-          _connecting = false;
-          _statusMsg = 'Error: $e';
-        });
-      }
-    }
+  Future<void> _init() async {
+    await led.loadSavedIp();
+    _ipController.text = led._espIp;
+    await _connect();
   }
 
-  void _sendCommand() {
+  Future<void> _connect() async {
+    setState(() { _connecting = true; });
+    final ok = await led.ping();
+    if (mounted) setState(() { _connected = ok; _connecting = false; });
+  }
+
+  void _sendCommand() async {
     final hex = '#${selectedColor.value.toRadixString(16).substring(2).toUpperCase()}';
-    mqtt.publish('home/living/led1', {
-      'on':         widget.device.isOn,
-      'color':      hex,
-      'effect':     effects[selectedEffect]['name'],
-      'brightness': brightness.round(),
-      'speed':      speed.round(),
-    });
-    if (_mqttConnected) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('✓ Command sent to LED!'),
-          backgroundColor: Color(0xFF1D9E75),
-          duration: Duration(seconds: 1),
-        ),
-      );
+    final ok = await led.sendFull(
+      on: widget.device.isOn,
+      color: hex,
+      effect: effects[selectedEffect]['name'] as String,
+      brightness: brightness.round(),
+      speed: speed.round(),
+    );
+    if (mounted) {
+      setState(() => _connected = ok);
+      if (ok) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('✓ LED updated!'), backgroundColor: Color(0xFF1D9E75), duration: Duration(seconds: 1)),
+        );
+      }
     }
+  }
+
+  void _showIpDialog() {
+    showDialog(
+      context: context,
+      builder: (_) => AlertDialog(
+        backgroundColor: const Color(0xFF1E1E32),
+        title: const Text('ESP32 IP address', style: TextStyle(color: Colors.white, fontSize: 14)),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text('Serial Monitor il ESP32 IP kaanikkum\n"WiFi OK — 192.168.x.x"', style: TextStyle(color: Colors.white54, fontSize: 12)),
+            const SizedBox(height: 12),
+            TextField(
+              controller: _ipController,
+              style: const TextStyle(color: Colors.white),
+              decoration: InputDecoration(
+                hintText: '192.168.1.100',
+                hintStyle: const TextStyle(color: Colors.white30),
+                filled: true,
+                fillColor: const Color(0xFF16213E),
+                border: OutlineInputBorder(borderRadius: BorderRadius.circular(10), borderSide: BorderSide.none),
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cancel')),
+          ElevatedButton(
+            onPressed: () async {
+              await led.saveIp(_ipController.text.trim());
+              if (context.mounted) Navigator.pop(context);
+              await _connect();
+            },
+            style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF6C63FF)),
+            child: const Text('Connect', style: TextStyle(color: Colors.white)),
+          ),
+        ],
+      ),
+    );
   }
 
   @override
@@ -98,26 +127,29 @@ class _LedControlScreenState extends State<LedControlScreen> {
       appBar: AppBar(
         title: const Text('LED Studio'),
         actions: [
-          Padding(
-            padding: const EdgeInsets.only(right: 8),
-            child: Row(children: [
-              if (_connecting)
-                const SizedBox(width: 12, height: 12, child: CircularProgressIndicator(strokeWidth: 2, color: Color(0xFFEF9F27)))
-              else
-                Container(width: 8, height: 8, decoration: BoxDecoration(shape: BoxShape.circle, color: _mqttConnected ? const Color(0xFF1D9E75) : const Color(0xFFE24B4A))),
-              const SizedBox(width: 5),
-              Text(
-                _connecting ? 'Connecting...' : (_mqttConnected ? 'Live' : 'Offline'),
-                style: TextStyle(fontSize: 11, color: _connecting ? const Color(0xFFEF9F27) : (_mqttConnected ? const Color(0xFF5DCAA5) : const Color(0xFFE24B4A))),
-              ),
-              const SizedBox(width: 8),
-            ]),
+          GestureDetector(
+            onTap: _showIpDialog,
+            child: Padding(
+              padding: const EdgeInsets.only(right: 8),
+              child: Row(children: [
+                if (_connecting)
+                  const SizedBox(width: 10, height: 10, child: CircularProgressIndicator(strokeWidth: 2, color: Color(0xFFEF9F27)))
+                else
+                  Container(width: 8, height: 8, decoration: BoxDecoration(shape: BoxShape.circle, color: _connected ? const Color(0xFF1D9E75) : const Color(0xFFE24B4A))),
+                const SizedBox(width: 5),
+                Text(
+                  _connecting ? 'Connecting...' : (_connected ? 'Live' : 'Offline — tap to set IP'),
+                  style: TextStyle(fontSize: 11, color: _connecting ? const Color(0xFFEF9F27) : (_connected ? const Color(0xFF5DCAA5) : const Color(0xFFE24B4A))),
+                ),
+                const SizedBox(width: 8),
+              ]),
+            ),
           ),
           Switch(
             value: d.isOn,
-            onChanged: (v) {
+            onChanged: (v) async {
               setState(() { d.isOn = v; d.sub = v ? effects[selectedEffect]['label'] as String : 'Off'; });
-              _sendCommand();
+              await led.setOn(v);
             },
           ),
           const SizedBox(width: 8),
@@ -127,40 +159,20 @@ class _LedControlScreenState extends State<LedControlScreen> {
         padding: const EdgeInsets.all(16),
         children: [
           // Status banner
-          if (!_mqttConnected && !_connecting)
-            Container(
-              margin: const EdgeInsets.only(bottom: 12),
-              padding: const EdgeInsets.all(12),
-              decoration: BoxDecoration(
-                color: const Color(0xFFE24B4A).withOpacity(0.1),
-                borderRadius: BorderRadius.circular(12),
-                border: Border.all(color: const Color(0xFFE24B4A).withOpacity(0.3)),
+          if (!_connected && !_connecting)
+            GestureDetector(
+              onTap: _showIpDialog,
+              child: Container(
+                margin: const EdgeInsets.only(bottom: 12),
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(color: const Color(0xFFE24B4A).withOpacity(0.1), borderRadius: BorderRadius.circular(12), border: Border.all(color: const Color(0xFFE24B4A).withOpacity(0.3))),
+                child: const Row(children: [
+                  Icon(Icons.wifi_off, color: Color(0xFFE24B4A), size: 16),
+                  SizedBox(width: 8),
+                  Expanded(child: Text('ESP32 connect alla — IP address set cheyyan tap cheyyu', style: TextStyle(color: Color(0xFFE24B4A), fontSize: 12))),
+                  Icon(Icons.arrow_forward_ios, color: Color(0xFFE24B4A), size: 12),
+                ]),
               ),
-              child: Row(children: [
-                const Icon(Icons.wifi_off, color: Color(0xFFE24B4A), size: 16),
-                const SizedBox(width: 8),
-                Expanded(child: Text(_statusMsg, style: const TextStyle(color: Color(0xFFE24B4A), fontSize: 12))),
-                GestureDetector(
-                  onTap: _connectMqtt,
-                  child: Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-                    decoration: BoxDecoration(color: const Color(0xFFE24B4A).withOpacity(0.2), borderRadius: BorderRadius.circular(8)),
-                    child: const Text('Retry', style: TextStyle(color: Color(0xFFE24B4A), fontSize: 11)),
-                  ),
-                ),
-              ]),
-            ),
-
-          if (_connecting)
-            Container(
-              margin: const EdgeInsets.only(bottom: 12),
-              padding: const EdgeInsets.all(12),
-              decoration: BoxDecoration(color: const Color(0xFFEF9F27).withOpacity(0.1), borderRadius: BorderRadius.circular(12), border: Border.all(color: const Color(0xFFEF9F27).withOpacity(0.3))),
-              child: const Row(children: [
-                SizedBox(width: 14, height: 14, child: CircularProgressIndicator(strokeWidth: 2, color: Color(0xFFEF9F27))),
-                SizedBox(width: 10),
-                Text('HiveMQ broker il connect cheyyunnu...', style: TextStyle(color: Color(0xFFEF9F27), fontSize: 12)),
-              ]),
             ),
 
           // Tube preview
@@ -180,7 +192,7 @@ class _LedControlScreenState extends State<LedControlScreen> {
             Row(children: [
               Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
                 Text(d.name, style: const TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.w500)),
-                const Text('WS2812B · ESP32 · GPIO 4', style: TextStyle(color: Colors.white38, fontSize: 10)),
+                Text('WS2812B · ESP32 · ${led._espIp}', style: const TextStyle(color: Colors.white38, fontSize: 10)),
               ])),
               Container(
                 padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
@@ -222,9 +234,9 @@ class _LedControlScreenState extends State<LedControlScreen> {
               );
             }).toList()),
             const SizedBox(height: 12),
-            _slider('Brightness', brightness, (v) => setState(() => brightness = v)),
+            _sld('Brightness', brightness, (v) => setState(() => brightness = v)),
             const SizedBox(height: 6),
-            _slider('Speed', speed, (v) => setState(() => speed = v)),
+            _sld('Speed', speed, (v) => setState(() => speed = v)),
           ])),
           const SizedBox(height: 12),
 
@@ -241,10 +253,7 @@ class _LedControlScreenState extends State<LedControlScreen> {
                 final e = effects[i];
                 final active = i == selectedEffect;
                 return GestureDetector(
-                  onTap: () {
-                    setState(() { selectedEffect = i; if (d.isOn) d.sub = e['label'] as String; });
-                    _sendCommand();
-                  },
+                  onTap: () { setState(() { selectedEffect = i; if (d.isOn) d.sub = e['label'] as String; }); _sendCommand(); },
                   child: Container(
                     decoration: BoxDecoration(
                       color: active ? const Color(0xFF6C63FF).withOpacity(0.18) : const Color(0xFF16213E),
@@ -269,9 +278,9 @@ class _LedControlScreenState extends State<LedControlScreen> {
         child: ElevatedButton.icon(
           onPressed: _sendCommand,
           icon: const Icon(Icons.send_rounded),
-          label: Text(_mqttConnected ? 'Send to LED' : 'Send (offline mode)'),
+          label: const Text('Send to LED'),
           style: ElevatedButton.styleFrom(
-            backgroundColor: _mqttConnected ? const Color(0xFF6C63FF) : const Color(0xFF2A2A40),
+            backgroundColor: _connected ? const Color(0xFF6C63FF) : const Color(0xFF2A2A40),
             foregroundColor: Colors.white,
             padding: const EdgeInsets.symmetric(vertical: 14),
             shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
@@ -284,7 +293,7 @@ class _LedControlScreenState extends State<LedControlScreen> {
   Widget _card({required Widget child}) => Container(padding: const EdgeInsets.all(14), decoration: BoxDecoration(color: const Color(0xFF1E1E32), borderRadius: BorderRadius.circular(16), border: Border.all(color: Colors.white10)), child: child);
   Widget _lbl(String t) => Padding(padding: const EdgeInsets.only(bottom: 8), child: Text(t, style: const TextStyle(color: Colors.white38, fontSize: 10, letterSpacing: 1, fontWeight: FontWeight.w500)));
   Widget _rgb(String l, int v) => Expanded(child: Container(padding: const EdgeInsets.symmetric(vertical: 4), decoration: BoxDecoration(color: const Color(0xFF16213E), borderRadius: BorderRadius.circular(6)), child: Column(children: [Text('$v', style: const TextStyle(color: Colors.white70, fontSize: 11)), Text(l, style: const TextStyle(color: Colors.white38, fontSize: 8))])));
-  Widget _slider(String label, double value, ValueChanged<double> onChanged) => Row(children: [
+  Widget _sld(String label, double value, ValueChanged<double> onChanged) => Row(children: [
     SizedBox(width: 80, child: Text(label, style: const TextStyle(color: Colors.white60, fontSize: 12))),
     Expanded(child: SliderTheme(data: SliderTheme.of(context).copyWith(activeTrackColor: const Color(0xFF6C63FF), thumbColor: const Color(0xFF6C63FF)), child: Slider(value: value, min: 0, max: 100, onChanged: onChanged))),
     SizedBox(width: 36, child: Text('${value.round()}%', textAlign: TextAlign.right, style: const TextStyle(color: Colors.white60, fontSize: 12))),
