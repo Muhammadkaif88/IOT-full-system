@@ -49,7 +49,7 @@ class _LedControlScreenState extends State<LedControlScreen> {
 
   Future<void> _init() async {
     await led.loadSavedIp();
-    _ipController.text = led._espIp;
+    _ipController.text = led.espIp;
     await _connect();
   }
 
@@ -192,7 +192,7 @@ class _LedControlScreenState extends State<LedControlScreen> {
             Row(children: [
               Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
                 Text(d.name, style: const TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.w500)),
-                Text('WS2812B · ESP32 · ${led._espIp}', style: const TextStyle(color: Colors.white38, fontSize: 10)),
+                Text('WS2812B · ESP32 · ${led.espIp}', style: const TextStyle(color: Colors.white38, fontSize: 10)),
               ])),
               Container(
                 padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
